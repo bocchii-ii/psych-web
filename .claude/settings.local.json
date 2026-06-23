@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem C:\\\\laragon\\\\www\\\\psych-web\\\\app -Recurse | Where-Object { !$_.PSIsContainer } | Select-Object FullName)",
+      "PowerShell(Get-ChildItem C:\\\\laragon\\\\www\\\\psych-web\\\\resources\\\\js -Recurse | Where-Object { !$_.PSIsContainer } | Select-Object FullName)",
+      "PowerShell(Get-ChildItem C:\\\\laragon\\\\www\\\\psych-web\\\\database -Recurse | Where-Object { !$_.PSIsContainer } | Select-Object FullName)",
+      "WebFetch(domain:opentdb.com)",
+      "PowerShell(Get-NetFirewallRule *)",
+      "PowerShell(Get-NetFirewallPortFilter *)",
+      "PowerShell(netsh advfirewall *)",
+      "PowerShell(Test-NetConnection *)"
+    ]
+  }
+}
