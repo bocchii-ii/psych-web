@@ -19,5 +19,6 @@ class DatabaseSeeder extends Seeder
         ]);
 
         $this->call(QuestionSeeder::class);
+        $this->call(HardSubjectQuestionSeeder::class);
     }
 }

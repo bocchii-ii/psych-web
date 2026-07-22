@@ -21,7 +21,9 @@
       "Bash(netstat -ano)",
       "Bash(curl *)",
       "Skill(claude-in-chrome)",
-      "Bash(php *)"
+      "Bash(php *)",
+      "Bash(echo -n \"\")",
+      "Bash(grep -o \"category' => 'Chemistry'\" database/seeders/HardSubjectQuestionSeeder.php)"
     ]
   }
 }
