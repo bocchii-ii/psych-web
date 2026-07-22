@@ -47,11 +47,25 @@ interface LeaderboardEntry {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function Game({ room: initialRoom, players: initialPlayers, auth }: { room: Room; players: Player[]; auth: Auth }) {
+export default function Game({
+    room: initialRoom,
+    players: initialPlayers,
+    auth,
+    question: initialQuestion,
+    time_left: initialTimeLeft,
+    is_spectator: isSpectator,
+}: {
+    room: Room;
+    players: Player[];
+    auth: Auth;
+    question?: string | null;
+    time_left?: number;
+    is_spectator?: boolean;
+}) {
     const [phase, setPhase] = useState<Phase>(initialRoom.status as Phase);
     const [round, setRound] = useState(initialRoom.current_round);
     const [totalRounds, setTotalRounds] = useState(initialRoom.total_rounds);
-    const [question, setQuestion] = useState('');
+    const [question, setQuestion] = useState(initialQuestion ?? '');
     const [answer, setAnswer] = useState('');
     const [submitted, setSubmitted] = useState(false);
     const [submitError, setSubmitError] = useState('');
@@ -117,10 +131,10 @@ export default function Game({ room: initialRoom, players: initialPlayers, auth 
             .listen('.PlayerVoted', (e: { playerName: string }) => {
                 setVotedPlayers((prev) => [...new Set([...prev, e.playerName])]);
             })
-            .listen('.RoundRevealed', (e: { correctAnswer: string; answers: AnswerOption[]; leaderboard: LeaderboardEntry[] }) => {
+            .listen('.RoundRevealed', (e: { correctAnswer: string; answers: AnswerOption[]; leaderboard: LeaderboardEntry[]; timeLimit: number }) => {
                 setReveal(e);
                 setPhase('reveal');
-                if (timerRef.current) clearInterval(timerRef.current);
+                startTimer(e.timeLimit);
                 setPlayers((prev) =>
                     prev.map((p) => {
                         const entry = e.leaderboard.find((l) => l.user_id === p.id);
@@ -144,6 +158,15 @@ export default function Game({ room: initialRoom, players: initialPlayers, auth 
     }, [initialRoom.code]);
 
     useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
+
+    // Resume the countdown if the page was (re)loaded mid-question/reveal phase,
+    // e.g. when a player's broadcast arrived before they subscribed.
+    useEffect(() => {
+        if ((initialRoom.status === 'question' || initialRoom.status === 'reveal') && initialTimeLeft) {
+            startTimer(initialTimeLeft);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // ── Actions ────────────────────────────────────────────────────────────────
 
@@ -188,12 +211,14 @@ export default function Game({ room: initialRoom, players: initialPlayers, auth 
                     {/* Header bar */}
                     <div className="flex items-center justify-between text-white">
                         <span className="font-bold">Round {round} / {totalRounds}</span>
-                        {(phase === 'question' || phase === 'voting') && (
+                        {(phase === 'question' || phase === 'voting' || phase === 'reveal') && (
                             <span className={`flex items-center gap-1 font-mono text-xl font-bold ${timerColor}`}>
                                 <Clock className="h-5 w-5" /> {timeLeft}s
                             </span>
                         )}
-                        <span className="text-sm opacity-70">{players.length} players</span>
+                        <span className="text-sm opacity-70">
+                            {players.length} players{isSpectator && ' · Spectating'}
+                        </span>
                     </div>
 
                     {/* ── QUESTION PHASE ── */}
@@ -203,7 +228,11 @@ export default function Game({ room: initialRoom, players: initialPlayers, auth 
                                 <CardTitle className="text-center text-lg leading-snug">{question}</CardTitle>
                             </CardHeader>
                             <CardContent>
-                                {!submitted ? (
+                                {isSpectator ? (
+                                    <p className="py-4 text-center text-sm text-muted-foreground">
+                                        You're spectating — watching players write their fake answers…
+                                    </p>
+                                ) : !submitted ? (
                                     <form onSubmit={submitAnswer} className="space-y-3">
                                         <p className="text-center text-sm text-muted-foreground">
                                             Write a convincing fake answer!
@@ -251,24 +280,23 @@ export default function Game({ room: initialRoom, players: initialPlayers, auth 
                         <Card>
                             <CardHeader>
                                 <CardTitle className="text-center text-lg leading-snug">{question}</CardTitle>
-                                <p className="text-center text-sm text-muted-foreground">Which answer is the real one?</p>
+                                <p className="text-center text-sm text-muted-foreground">
+                                    {isSpectator ? "You're spectating — watching players vote…" : 'Which answer is the real one?'}
+                                </p>
                             </CardHeader>
                             <CardContent className="space-y-3">
                                 {answers.map((a, i) => {
-                                    const isOwn = a.id !== null && players.find((p) => p.id === auth.user.id)
-                                        ? false
-                                        : false;
                                     const isSelected = selectedAnswerId === a.id;
                                     return (
                                         <button
                                             key={i}
                                             onClick={() => submitVote(a.id ?? null)}
-                                            disabled={voted}
+                                            disabled={voted || isSpectator}
                                             className={`w-full rounded-xl border-2 px-4 py-3 text-left text-sm font-medium transition-all ${
                                                 isSelected
                                                     ? 'border-purple-600 bg-purple-50 dark:bg-purple-950'
                                                     : 'border-border bg-card hover:border-purple-400'
-                                            } ${voted && !isSelected ? 'opacity-50' : ''}`}
+                                            } ${voted && !isSelected ? 'opacity-50' : ''} ${isSpectator ? 'cursor-default' : ''}`}
                                         >
                                             {a.text}
                                         </button>
@@ -349,11 +377,13 @@ export default function Game({ room: initialRoom, players: initialPlayers, auth 
 
                             {isHost && (
                                 <Button className="w-full bg-purple-600 hover:bg-purple-700" onClick={nextRound}>
-                                    {round >= totalRounds ? 'See Final Results' : 'Next Round'}
+                                    {round >= totalRounds ? 'See Final Results' : `Next Round (auto in ${timeLeft}s)`}
                                 </Button>
                             )}
                             {!isHost && (
-                                <p className="text-center text-sm text-white/70">Waiting for host to continue…</p>
+                                <p className="text-center text-sm text-white/70">
+                                    Waiting for host to continue… (auto-advances in {timeLeft}s)
+                                </p>
                             )}
                         </div>
                     )}

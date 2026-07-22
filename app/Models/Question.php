@@ -10,5 +10,10 @@ class Question extends Model
         'body',
         'correct_answer',
         'category',
+        'asked_at',
+    ];
+
+    protected $casts = [
+        'asked_at' => 'datetime',
     ];
 }

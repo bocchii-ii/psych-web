@@ -8,7 +8,20 @@
       "PowerShell(Get-NetFirewallRule *)",
       "PowerShell(Get-NetFirewallPortFilter *)",
       "PowerShell(netsh advfirewall *)",
-      "PowerShell(Test-NetConnection *)"
+      "PowerShell(Test-NetConnection *)",
+      "Bash(php artisan *)",
+      "Bash(grep -iE \"\\\\.tsx$\")",
+      "Bash(npx tsc *)",
+      "Bash(npm view *)",
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(npx eslint *)",
+      "Bash(npx prettier *)",
+      "Skill(run)",
+      "Bash(netstat -ano)",
+      "Bash(curl *)",
+      "Skill(claude-in-chrome)",
+      "Bash(php *)"
     ]
   }
 }

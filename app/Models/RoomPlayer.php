@@ -13,11 +13,14 @@ class RoomPlayer extends Model
         'room_id',
         'user_id',
         'score',
+        'times_fooled',
         'joined_at',
+        'is_spectator',
     ];
 
     protected $casts = [
         'joined_at' => 'datetime',
+        'is_spectator' => 'boolean',
     ];
 
     public function room(): BelongsTo

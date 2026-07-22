@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Events\GameEnded;
 use App\Events\GameStarted;
+use App\Events\HostSpectatorModeChanged;
+use App\Events\PlayAgainStarted;
 use App\Events\PlayerJoined;
 use App\Events\PlayerLeft;
 use App\Events\PlayerSubmitted;
@@ -12,6 +14,7 @@ use App\Events\RoundRevealed;
 use App\Events\RoundStarted;
 use App\Events\VotingStarted;
 use App\Jobs\ExpireAnswerPhase;
+use App\Jobs\ExpireRevealPhase;
 use App\Jobs\ExpireVotingPhase;
 use App\Models\Question;
 use App\Models\Room;
@@ -24,7 +27,8 @@ use Illuminate\Support\Str;
 class RoomService
 {
     public const ANSWER_SECONDS = 60;
-    public const VOTING_SECONDS = 30;
+    public const VOTING_SECONDS_PER_CHOICE = 10;
+    public const REVEAL_SECONDS = 60;
 
     public function __construct(
         private AnswerSanitizer $sanitizer,
@@ -85,6 +89,16 @@ class RoomService
         broadcast(new PlayerLeft($room->code, $user->id, $user->name, $newHostId));
     }
 
+    public function setSpectatorMode(Room $room, User $host, bool $isSpectator): void
+    {
+        abort_if($room->host_id !== $host->id, 403);
+        abort_if($room->status !== 'waiting', 422, 'Cannot change spectator mode after the game has started.');
+
+        $room->players()->where('user_id', $host->id)->update(['is_spectator' => $isSpectator]);
+
+        broadcast(new HostSpectatorModeChanged($room->code, $isSpectator));
+    }
+
     public function startGame(Room $room): void
     {
         $room->update(['status' => 'question', 'current_round' => 0]);
@@ -99,12 +113,26 @@ class RoomService
         $nextRound = $room->current_round + 1;
         $room->update(['current_round' => $nextRound, 'status' => 'question']);
 
-        $question = Question::inRandomOrder()->first();
+        $question = Question::where(function ($query) {
+            $query->whereNull('asked_at')
+                ->orWhere('asked_at', '<', now()->startOfWeek());
+        })->inRandomOrder()->first();
 
-        // Store question on room for reference during reveal
+        // Fall back to reusing a question if the whole bank was already asked this week
+        $question ??= Question::inRandomOrder()->first();
+
+        $question->update(['asked_at' => now()]);
+
+        $deadline = now()->addSeconds(self::ANSWER_SECONDS);
+
+        // Store question on room for reference during reveal, and for players
+        // who load the Game page after (or without) receiving the RoundStarted
+        // broadcast — see RoomController::gameProps().
         $room->update(['status' => 'question']);
         cache()->put("room:{$room->id}:round:{$nextRound}:question", $question->id, 3600);
         cache()->put("room:{$room->id}:round:{$nextRound}:correct", $question->correct_answer, 3600);
+        cache()->put("room:{$room->id}:round:{$nextRound}:question_body", $question->body, 3600);
+        cache()->put("room:{$room->id}:round:{$nextRound}:deadline", $deadline->toIso8601String(), 3600);
 
         broadcast(new RoundStarted(
             $room->code,
@@ -114,19 +142,21 @@ class RoomService
             self::ANSWER_SECONDS,
         ));
 
-        ExpireAnswerPhase::dispatch($room->id, $nextRound)
-            ->delay(now()->addSeconds(self::ANSWER_SECONDS));
+        ExpireAnswerPhase::dispatch($room->id, $nextRound)->delay($deadline);
     }
 
     public function submitAnswer(Room $room, User $user, string $rawAnswer): RoundSubmission
     {
         abort_if($room->status !== 'question', 422, 'Answer phase is not active.');
 
+        $isSpectator = $room->players()->where('user_id', $user->id)->value('is_spectator');
+        abort_if($isSpectator, 422, 'Spectators cannot submit answers.');
+
         $sanitized = $this->sanitizer->sanitize($rawAnswer);
         abort_if($sanitized === '', 422, 'Answer cannot be empty after sanitization.');
 
         $correctAnswer = cache()->get("room:{$room->id}:round:{$room->current_round}:correct");
-        abort_if($sanitized === $correctAnswer, 422, 'Too close to the real answer! Try something else.');
+        abort_if($sanitized === $correctAnswer, 422, 'Someone already submitted that answer. Try rephrasing.');
 
         $duplicate = RoundSubmission::where('room_id', $room->id)
             ->where('round_number', $room->current_round)
@@ -149,7 +179,7 @@ class RoomService
         );
 
         $submittedCount = $room->currentRoundSubmissions()->count();
-        $totalCount = $room->players()->count();
+        $totalCount = $room->activePlayers()->count();
 
         broadcast(new PlayerSubmitted($room->code, $user->name, $submittedCount, $totalCount));
 
@@ -182,15 +212,22 @@ class RoomService
             'is_correct' => true,
         ])->shuffle()->values()->all();
 
-        broadcast(new VotingStarted($room->code, $answers, self::VOTING_SECONDS));
+        // Scale voting time with the number of choices so larger rooms (more
+        // fake answers to read) still have enough time to decide.
+        $votingSeconds = count($answers) * self::VOTING_SECONDS_PER_CHOICE;
+
+        broadcast(new VotingStarted($room->code, $answers, $votingSeconds));
 
         ExpireVotingPhase::dispatch($room->id, $room->current_round)
-            ->delay(now()->addSeconds(self::VOTING_SECONDS));
+            ->delay(now()->addSeconds($votingSeconds));
     }
 
     public function submitVote(Room $room, User $voter, ?int $submissionId): RoundVote
     {
         abort_if($room->status !== 'voting', 422, 'Voting phase is not active.');
+
+        $isSpectator = $room->players()->where('user_id', $voter->id)->value('is_spectator');
+        abort_if($isSpectator, 422, 'Spectators cannot vote.');
 
         if ($submissionId !== null) {
             $ownSubmission = RoundSubmission::where('id', $submissionId)
@@ -209,7 +246,7 @@ class RoomService
         );
 
         $votedCount = $room->currentRoundVotes()->count();
-        $totalCount = $room->players()->count();
+        $totalCount = $room->activePlayers()->count();
 
         broadcast(new PlayerVoted($room->code, $voter->name, $votedCount, $totalCount));
 
@@ -238,6 +275,14 @@ class RoomService
             $room->players()->where('user_id', $userId)->increment('score', $delta);
         }
 
+        // Track how many players each submission fooled, for the "Most/Least
+        // Psyched" end-game superlatives.
+        foreach ($submissions as $s) {
+            if ($s->votes->isNotEmpty()) {
+                $room->players()->where('user_id', $s->user_id)->increment('times_fooled', $s->votes->count());
+            }
+        }
+
         $answers = $submissions->map(function ($s) use ($points) {
             return [
                 'id' => $s->id,
@@ -255,9 +300,9 @@ class RoomService
                 ->map(fn ($v) => $v->voter->name)->all(),
             'points_earned' => 0,
             'is_correct' => true,
-        ])->all();
+        ])->shuffle()->values()->all();
 
-        $leaderboard = $room->players()->with('user')->orderByDesc('score')->get()
+        $leaderboard = $room->activePlayers()->with('user')->orderByDesc('score')->get()
             ->map(fn ($rp) => [
                 'user_id' => $rp->user_id,
                 'name' => $rp->user->name,
@@ -265,7 +310,12 @@ class RoomService
                 'delta' => $points[$rp->user_id] ?? 0,
             ])->all();
 
-        broadcast(new RoundRevealed($room->code, $correctAnswer, $answers, $leaderboard));
+        $deadline = now()->addSeconds(self::REVEAL_SECONDS);
+        cache()->put("room:{$room->id}:round:{$room->current_round}:reveal_deadline", $deadline->toIso8601String(), 3600);
+
+        broadcast(new RoundRevealed($room->code, $correctAnswer, $answers, $leaderboard, self::REVEAL_SECONDS));
+
+        ExpireRevealPhase::dispatch($room->id, $room->current_round)->delay($deadline);
     }
 
     public function advanceAfterReveal(Room $room): void
@@ -281,7 +331,7 @@ class RoomService
     {
         $room->update(['status' => 'finished']);
 
-        $leaderboard = $room->players()->with('user')->orderByDesc('score')->get()
+        $leaderboard = $room->activePlayers()->with('user')->orderByDesc('score')->get()
             ->map(fn ($rp) => [
                 'user_id' => $rp->user_id,
                 'name' => $rp->user->name,
@@ -289,6 +339,23 @@ class RoomService
             ])->all();
 
         broadcast(new GameEnded($room->code, $leaderboard));
+    }
+
+    public function playAgain(Room $oldRoom, User $host): Room
+    {
+        abort_if($oldRoom->host_id !== $host->id, 403);
+        abort_if($oldRoom->status !== 'finished', 422, 'Game is not finished yet.');
+
+        $newRoom = $this->createRoom($host, $oldRoom->total_rounds);
+
+        $otherPlayers = $oldRoom->players()->where('user_id', '!=', $host->id)->with('user')->get();
+        foreach ($otherPlayers as $player) {
+            $this->joinRoom($newRoom->code, $player->user);
+        }
+
+        broadcast(new PlayAgainStarted($oldRoom->code, $newRoom->code))->toOthers();
+
+        return $newRoom;
     }
 
     private function generateCode(): string

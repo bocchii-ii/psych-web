@@ -1,12 +1,14 @@
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Head, router } from '@inertiajs/react';
-import { Copy, LogOut, Play, Users } from 'lucide-react';
+import axios from 'axios';
+import { Copy, Eye, LogOut, Play, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 interface Player {
     id: number;
     name: string;
+    is_spectator: boolean;
 }
 
 interface Room {
@@ -31,6 +33,8 @@ export default function Lobby({ room, players: initialPlayers, auth }: Props) {
     const [players, setPlayers] = useState<Player[]>(initialPlayers);
     const [copied, setCopied] = useState(false);
     const isHost = auth.user.id === room.host_id;
+    const isSpectating = players.find((p) => p.id === room.host_id)?.is_spectator ?? false;
+    const activePlayerCount = players.filter((p) => !p.is_spectator).length;
 
     useEffect(() => {
         const channel = window.Echo.private(`room.${room.code}`);
@@ -39,11 +43,14 @@ export default function Lobby({ room, players: initialPlayers, auth }: Props) {
             .listen('.PlayerJoined', (e: { userId: number; playerName: string; playerCount: number }) => {
                 setPlayers((prev) => {
                     if (prev.some((p) => p.id === e.userId)) return prev;
-                    return [...prev, { id: e.userId, name: e.playerName }];
+                    return [...prev, { id: e.userId, name: e.playerName, is_spectator: false }];
                 });
             })
             .listen('.PlayerLeft', (e: { userId: number }) => {
                 setPlayers((prev) => prev.filter((p) => p.id !== e.userId));
+            })
+            .listen('.HostSpectatorModeChanged', (e: { isSpectator: boolean }) => {
+                setPlayers((prev) => prev.map((p) => (p.id === room.host_id ? { ...p, is_spectator: e.isSpectator } : p)));
             })
             .listen('.GameStarted', () => {
                 router.visit(route('rooms.game', room.code));
@@ -52,6 +59,7 @@ export default function Lobby({ room, players: initialPlayers, auth }: Props) {
         return () => {
             channel.stopListening('.PlayerJoined');
             channel.stopListening('.PlayerLeft');
+            channel.stopListening('.HostSpectatorModeChanged');
             channel.stopListening('.GameStarted');
         };
     }, [room.code]);
@@ -64,6 +72,16 @@ export default function Lobby({ room, players: initialPlayers, auth }: Props) {
 
     const startGame = () => {
         router.post(route('rooms.start', room.code));
+    };
+
+    const toggleSpectate = async () => {
+        const next = !isSpectating;
+        setPlayers((prev) => prev.map((p) => (p.id === room.host_id ? { ...p, is_spectator: next } : p)));
+        try {
+            await axios.post(route('rooms.spectate', room.code), { is_spectator: next });
+        } catch {
+            setPlayers((prev) => prev.map((p) => (p.id === room.host_id ? { ...p, is_spectator: !next } : p)));
+        }
     };
 
     const leave = () => {
@@ -105,6 +123,11 @@ export default function Lobby({ room, players: initialPlayers, auth }: Props) {
                                             {p.name[0].toUpperCase()}
                                         </div>
                                         <span className="font-medium">{p.name}</span>
+                                        {p.is_spectator && (
+                                            <span className="flex items-center gap-1 text-xs font-semibold text-muted-foreground">
+                                                <Eye className="h-3 w-3" /> Spectating
+                                            </span>
+                                        )}
                                         {p.id === room.host_id && (
                                             <span className="ml-auto text-xs font-semibold text-purple-600">HOST</span>
                                         )}
@@ -117,6 +140,14 @@ export default function Lobby({ room, players: initialPlayers, auth }: Props) {
                     {/* Info */}
                     <p className="text-center text-sm text-white/70">{room.total_rounds} rounds</p>
 
+                    {/* Host spectator toggle */}
+                    {isHost && (
+                        <Button variant="outline" className="w-full" onClick={toggleSpectate}>
+                            <Eye className="mr-2 h-4 w-4" />
+                            {isSpectating ? 'Join as a player' : 'Spectate instead of play'}
+                        </Button>
+                    )}
+
                     {/* Actions */}
                     <div className="flex gap-2">
                         <Button variant="outline" className="flex-1" onClick={leave}>
@@ -127,7 +158,7 @@ export default function Lobby({ room, players: initialPlayers, auth }: Props) {
                             <Button
                                 className="flex-1 bg-green-500 hover:bg-green-600"
                                 onClick={startGame}
-                                disabled={players.length < 2}
+                                disabled={activePlayerCount < 2}
                             >
                                 <Play className="mr-2 h-4 w-4" />
                                 Start Game

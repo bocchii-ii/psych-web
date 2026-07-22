@@ -55,16 +55,31 @@ class GameController extends Controller
     {
         $room = Room::where('code', strtoupper($code))->firstOrFail();
 
-        $leaderboard = $room->players()->with('user')->orderByDesc('score')->get()
+        $players = $room->activePlayers()->with('user')->get();
+
+        $leaderboard = $players->sortByDesc('score')->values()
             ->map(fn ($rp) => [
                 'user_id' => $rp->user_id,
                 'name' => $rp->user->name,
                 'score' => $rp->score,
             ]);
 
+        $mostPsyched = $players->sortByDesc('times_fooled')->first();
+        $leastPsyched = $players->sortBy('times_fooled')->first();
+
         return Inertia::render('EndScreen', [
-            'room' => ['code' => $room->code],
+            'room' => ['code' => $room->code, 'host_id' => $room->host_id],
             'leaderboard' => $leaderboard,
+            'most_psyched' => $mostPsyched ? [
+                'user_id' => $mostPsyched->user_id,
+                'name' => $mostPsyched->user->name,
+                'count' => $mostPsyched->times_fooled,
+            ] : null,
+            'least_psyched' => $leastPsyched ? [
+                'user_id' => $leastPsyched->user_id,
+                'name' => $leastPsyched->user->name,
+                'count' => $leastPsyched->times_fooled,
+            ] : null,
             'auth' => ['user' => auth()->user()->only('id', 'name')],
         ]);
     }

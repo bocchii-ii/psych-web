@@ -26,6 +26,11 @@ class Room extends Model
         return $this->hasMany(RoomPlayer::class);
     }
 
+    public function activePlayers(): HasMany
+    {
+        return $this->players()->where('is_spectator', false);
+    }
+
     public function submissions(): HasMany
     {
         return $this->hasMany(RoundSubmission::class);

@@ -48,7 +48,7 @@ class ScoreCalculatorTest extends TestCase
         }
     }
 
-    public function test_player_gets_1_point_for_picking_correct_answer(): void
+    public function test_player_gets_2_points_for_picking_correct_answer(): void
     {
         RoundSubmission::create([
             'room_id' => $this->room->id,
@@ -68,7 +68,7 @@ class ScoreCalculatorTest extends TestCase
         $submissions = $this->room->currentRoundSubmissions()->get();
         $points = $this->calculator->calculate($this->room, $submissions, 'real answer');
 
-        $this->assertSame(1, $points[$this->host->id]);
+        $this->assertSame(2, $points[$this->host->id]);
         $this->assertSame(0, $points[$this->p2->id]);
     }
 
@@ -109,7 +109,7 @@ class ScoreCalculatorTest extends TestCase
         $submissions = $this->room->currentRoundSubmissions()->get();
         $points = $this->calculator->calculate($this->room, $submissions, 'real answer');
 
-        $this->assertSame(1, $points[$this->p3->id]);
+        $this->assertSame(2, $points[$this->p3->id]);
         $this->assertSame(1, $points[$this->p2->id]);
         $this->assertSame(0, $points[$this->host->id]);
     }

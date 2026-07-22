@@ -24,7 +24,7 @@ class ScoreCalculator
         foreach ($votes as $vote) {
             if ($vote->submission_id === null) {
                 // voted for the correct answer
-                $points[$vote->voter_id] = ($points[$vote->voter_id] ?? 0) + 1;
+                $points[$vote->voter_id] = ($points[$vote->voter_id] ?? 0) + 2;
             } else {
                 // voter was fooled — reward the submission author
                 $submission = $submissions->firstWhere('id', $vote->submission_id);
