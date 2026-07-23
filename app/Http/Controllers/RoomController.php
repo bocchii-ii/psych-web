@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Question;
 use App\Models\Room;
+use App\Services\RoomPruner;
 use App\Services\RoomService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -15,10 +16,19 @@ use Inertia\Response;
 
 class RoomController extends Controller
 {
-    public function __construct(private RoomService $roomService) {}
+    public function __construct(
+        private RoomService $roomService,
+        private RoomPruner $roomPruner,
+    ) {}
 
     public function index(): Response
     {
+        // Opportunistic cleanup: the scheduler-driven `rooms:prune` command is
+        // the primary mechanism, but a home-page visit is a free chance to
+        // keep the open-lobby list free of dead rooms even on setups where
+        // the scheduler cron isn't wired up.
+        $this->roomPruner->prune();
+
         $categories = Question::query()
             ->whereNotNull('category')
             ->distinct()
