@@ -229,11 +229,11 @@ class RoomService
 
         $answers = $submissions->map(fn ($s) => [
             'id' => $s->id,
-            'text' => $s->raw_answer,
+            'text' => mb_strtolower($s->raw_answer),
             'is_correct' => false,
         ])->push([
             'id' => null,
-            'text' => $correctAnswer,
+            'text' => mb_strtolower($correctAnswer),
             'is_correct' => true,
         ])->shuffle()->values()->all();
 
@@ -322,7 +322,7 @@ class RoomService
         $answers = $submissions->map(function ($s) use ($points) {
             return [
                 'id' => $s->id,
-                'text' => $s->raw_answer,
+                'text' => mb_strtolower($s->raw_answer),
                 'author' => $s->user->name,
                 'voters' => $s->votes->map(fn ($v) => $v->voter->name)->all(),
                 'points_earned' => $points[$s->user_id] ?? 0,
@@ -330,7 +330,7 @@ class RoomService
             ];
         })->push([
             'id' => null,
-            'text' => $correctAnswer,
+            'text' => mb_strtolower($correctAnswer),
             'author' => null,
             'voters' => $room->currentRoundVotes()->whereNull('submission_id')->with('voter')->get()
                 ->map(fn ($v) => $v->voter->name)->all(),
