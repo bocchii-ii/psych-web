@@ -14,6 +14,7 @@ class RoomPlayer extends Model
         'user_id',
         'score',
         'times_fooled',
+        'times_gullible',
         'joined_at',
         'is_spectator',
     ];

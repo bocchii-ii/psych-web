@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Head, router } from '@inertiajs/react';
 import axios from 'axios';
-import { Crown, Flame, Home, Snowflake } from 'lucide-react';
+import { Crown, Fish, Flame, Home } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 interface LeaderboardEntry {
@@ -31,14 +31,14 @@ interface Auth {
 export default function EndScreen({
     room,
     leaderboard,
-    most_psyched: mostPsyched,
-    least_psyched: leastPsyched,
+    psyched_most: psychedMost,
+    most_gullible: mostGullible,
     auth,
 }: {
     room: Room;
     leaderboard: LeaderboardEntry[];
-    most_psyched: Superlative | null;
-    least_psyched: Superlative | null;
+    psyched_most: Superlative | null;
+    most_gullible: Superlative | null;
     auth: Auth;
 }) {
     const winner = leaderboard[0];
@@ -125,28 +125,28 @@ export default function EndScreen({
                     </Card>
 
                     {/* Superlatives */}
-                    {(mostPsyched || leastPsyched) && (
+                    {(psychedMost || mostGullible) && (
                         <div className="grid grid-cols-2 gap-3">
-                            {mostPsyched && (
+                            {psychedMost && (
                                 <Card>
                                     <CardContent className="flex flex-col items-center gap-1 py-4 text-center">
                                         <Flame className="h-6 w-6 text-orange-500" />
-                                        <p className="text-muted-foreground text-xs font-medium">Most Psyched</p>
-                                        <p className="font-bold">{mostPsyched.name}</p>
+                                        <p className="text-muted-foreground text-xs font-medium">Psyched Most Players</p>
+                                        <p className="font-bold">{psychedMost.name}</p>
                                         <p className="text-muted-foreground text-xs">
-                                            fooled {mostPsyched.count} time{mostPsyched.count !== 1 ? 's' : ''}
+                                            fooled {psychedMost.count} time{psychedMost.count !== 1 ? 's' : ''}
                                         </p>
                                     </CardContent>
                                 </Card>
                             )}
-                            {leastPsyched && (
+                            {mostGullible && (
                                 <Card>
                                     <CardContent className="flex flex-col items-center gap-1 py-4 text-center">
-                                        <Snowflake className="h-6 w-6 text-blue-400" />
-                                        <p className="text-muted-foreground text-xs font-medium">Least Psyched</p>
-                                        <p className="font-bold">{leastPsyched.name}</p>
+                                        <Fish className="h-6 w-6 text-blue-400" />
+                                        <p className="text-muted-foreground text-xs font-medium">Most Gullible Player</p>
+                                        <p className="font-bold">{mostGullible.name}</p>
                                         <p className="text-muted-foreground text-xs">
-                                            fooled {leastPsyched.count} time{leastPsyched.count !== 1 ? 's' : ''}
+                                            fell for it {mostGullible.count} time{mostGullible.count !== 1 ? 's' : ''}
                                         </p>
                                     </CardContent>
                                 </Card>

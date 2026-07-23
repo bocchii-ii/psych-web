@@ -17,6 +17,8 @@ interface Room {
     total_rounds: number;
     host_id: number;
     status: string;
+    max_players: number;
+    excluded_categories: string[];
 }
 
 interface Auth {
@@ -112,7 +114,7 @@ export default function Lobby({ room, players: initialPlayers, auth }: Props) {
                         <CardHeader className="pb-2">
                             <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
                                 <Users className="h-4 w-4" />
-                                Players ({players.length})
+                                Players ({players.length}/{room.max_players})
                             </CardTitle>
                         </CardHeader>
                         <CardContent>
@@ -139,6 +141,11 @@ export default function Lobby({ room, players: initialPlayers, auth }: Props) {
 
                     {/* Info */}
                     <p className="text-center text-sm text-white/70">{room.total_rounds} rounds</p>
+                    {room.excluded_categories.length > 0 && (
+                        <p className="text-center text-xs text-white/50">
+                            Excluded: {room.excluded_categories.join(', ')}
+                        </p>
+                    )}
 
                     {/* Host spectator toggle */}
                     {isHost && (

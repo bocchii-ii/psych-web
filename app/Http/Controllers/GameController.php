@@ -64,21 +64,21 @@ class GameController extends Controller
                 'score' => $rp->score,
             ]);
 
-        $mostPsyched = $players->sortByDesc('times_fooled')->first();
-        $leastPsyched = $players->sortBy('times_fooled')->first();
+        $psychedMost = $players->sortByDesc('times_fooled')->first();
+        $mostGullible = $players->sortByDesc('times_gullible')->first();
 
         return Inertia::render('EndScreen', [
             'room' => ['code' => $room->code, 'host_id' => $room->host_id],
             'leaderboard' => $leaderboard,
-            'most_psyched' => $mostPsyched ? [
-                'user_id' => $mostPsyched->user_id,
-                'name' => $mostPsyched->user->name,
-                'count' => $mostPsyched->times_fooled,
+            'psyched_most' => $psychedMost ? [
+                'user_id' => $psychedMost->user_id,
+                'name' => $psychedMost->user->name,
+                'count' => $psychedMost->times_fooled,
             ] : null,
-            'least_psyched' => $leastPsyched ? [
-                'user_id' => $leastPsyched->user_id,
-                'name' => $leastPsyched->user->name,
-                'count' => $leastPsyched->times_fooled,
+            'most_gullible' => $mostGullible ? [
+                'user_id' => $mostGullible->user_id,
+                'name' => $mostGullible->user->name,
+                'count' => $mostGullible->times_gullible,
             ] : null,
             'auth' => ['user' => auth()->user()->only('id', 'name')],
         ]);

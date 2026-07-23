@@ -14,7 +14,18 @@ class Room extends Model
         'status',
         'total_rounds',
         'current_round',
+        'max_players',
+        'excluded_categories',
     ];
+
+    protected $casts = [
+        'excluded_categories' => 'array',
+    ];
+
+    public function isFull(): bool
+    {
+        return $this->players()->count() >= $this->max_players;
+    }
 
     public function host(): BelongsTo
     {

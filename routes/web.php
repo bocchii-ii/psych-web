@@ -1,11 +1,14 @@
 <?php
 
+use App\Http\Controllers\Auth\GuestSessionController;
 use App\Http\Controllers\GameController;
 use App\Http\Controllers\RoomController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
 Route::get('/', [RoomController::class, 'index'])->name('home');
+
+Route::post('/guest-login', [GuestSessionController::class, 'store'])->name('guest.login');
 
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/dashboard', fn () => redirect()->route('home'))->name('dashboard');

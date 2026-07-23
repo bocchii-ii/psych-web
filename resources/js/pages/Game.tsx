@@ -54,6 +54,9 @@ export default function Game({
     question: initialQuestion,
     time_left: initialTimeLeft,
     is_spectator: isSpectator,
+    answers: initialAnswers,
+    has_voted: initialHasVoted,
+    voted_submission_id: initialVotedSubmissionId,
 }: {
     room: Room;
     players: Player[];
@@ -61,6 +64,9 @@ export default function Game({
     question?: string | null;
     time_left?: number;
     is_spectator?: boolean;
+    answers?: AnswerOption[];
+    has_voted?: boolean;
+    voted_submission_id?: number | null;
 }) {
     const [phase, setPhase] = useState<Phase>(initialRoom.status as Phase);
     const [round, setRound] = useState(initialRoom.current_round);
@@ -71,9 +77,11 @@ export default function Game({
     const [submitError, setSubmitError] = useState('');
     const [submittedPlayers, setSubmittedPlayers] = useState<string[]>([]);
     const [votedPlayers, setVotedPlayers] = useState<string[]>([]);
-    const [answers, setAnswers] = useState<AnswerOption[]>([]);
-    const [selectedAnswerId, setSelectedAnswerId] = useState<number | null | undefined>(undefined);
-    const [voted, setVoted] = useState(false);
+    const [answers, setAnswers] = useState<AnswerOption[]>(initialAnswers ?? []);
+    const [selectedAnswerId, setSelectedAnswerId] = useState<number | null | undefined>(
+        initialHasVoted ? (initialVotedSubmissionId ?? null) : undefined,
+    );
+    const [voted, setVoted] = useState(!!initialHasVoted);
     const [voteError, setVoteError] = useState('');
     const [reveal, setReveal] = useState<{ correctAnswer: string; answers: AnswerOption[]; leaderboard: LeaderboardEntry[] } | null>(null);
     const [players, setPlayers] = useState<Player[]>(initialPlayers);
@@ -159,10 +167,13 @@ export default function Game({
 
     useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
 
-    // Resume the countdown if the page was (re)loaded mid-question/reveal phase,
-    // e.g. when a player's broadcast arrived before they subscribed.
+    // Resume the countdown if the page was (re)loaded mid-question/voting/reveal
+    // phase, e.g. when a player's broadcast arrived before they subscribed.
     useEffect(() => {
-        if ((initialRoom.status === 'question' || initialRoom.status === 'reveal') && initialTimeLeft) {
+        if (
+            (initialRoom.status === 'question' || initialRoom.status === 'voting' || initialRoom.status === 'reveal') &&
+            initialTimeLeft
+        ) {
             startTimer(initialTimeLeft);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -2,12 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Question;
 use App\Models\Room;
 use App\Services\RoomService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -17,16 +19,50 @@ class RoomController extends Controller
 
     public function index(): Response
     {
-        return Inertia::render('Home');
+        $categories = Question::query()
+            ->whereNotNull('category')
+            ->distinct()
+            ->orderBy('category')
+            ->pluck('category');
+
+        $openRooms = Room::whereIn('status', ['waiting', 'question', 'voting', 'reveal'])
+            ->withCount('players')
+            ->with('host')
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(fn (Room $room) => [
+                'code' => $room->code,
+                'host_name' => $room->host->name,
+                'player_count' => $room->players_count,
+                'max_players' => $room->max_players,
+                'total_rounds' => $room->total_rounds,
+                'is_full' => $room->status === 'waiting' && $room->players_count >= $room->max_players,
+                'in_progress' => $room->status !== 'waiting',
+            ]);
+
+        return Inertia::render('Home', [
+            'categories' => $categories,
+            'open_rooms' => $openRooms,
+        ]);
     }
 
     public function store(Request $request): RedirectResponse
     {
+        $categories = Question::query()->whereNotNull('category')->distinct()->pluck('category');
+
         $data = $request->validate([
             'total_rounds' => 'required|integer|in:3,5,7,10',
+            'max_players' => 'required|integer|min:2|max:16',
+            'excluded_categories' => 'array',
+            'excluded_categories.*' => ['string', Rule::in($categories)],
         ]);
 
-        $room = $this->roomService->createRoom($request->user(), $data['total_rounds']);
+        $room = $this->roomService->createRoom(
+            $request->user(),
+            $data['total_rounds'],
+            $data['max_players'],
+            $data['excluded_categories'] ?? [],
+        );
 
         return redirect()->route('rooms.lobby', $room->code);
     }
@@ -65,6 +101,8 @@ class RoomController extends Controller
                 'total_rounds' => $room->total_rounds,
                 'host_id' => $room->host_id,
                 'status' => $room->status,
+                'max_players' => $room->max_players,
+                'excluded_categories' => $room->excluded_categories ?? [],
             ],
             'players' => $players,
             'auth' => ['user' => auth()->user()->only('id', 'name')],
@@ -134,6 +172,9 @@ class RoomController extends Controller
 
         $question = null;
         $timeLeft = 0;
+        $answers = [];
+        $votedSubmissionId = null;
+        $hasVoted = false;
 
         if (in_array($room->status, ['question', 'voting', 'reveal'], true)) {
             $question = cache()->get("room:{$room->id}:round:{$room->current_round}:question_body");
@@ -143,6 +184,20 @@ class RoomController extends Controller
             $deadline = cache()->get("room:{$room->id}:round:{$room->current_round}:deadline");
             if ($deadline) {
                 $timeLeft = max(0, Carbon::parse($deadline)->getTimestamp() - now()->getTimestamp());
+            }
+        }
+
+        if ($room->status === 'voting') {
+            $answers = cache()->get("room:{$room->id}:round:{$room->current_round}:answers", []);
+            $deadline = cache()->get("room:{$room->id}:round:{$room->current_round}:voting_deadline");
+            if ($deadline) {
+                $timeLeft = max(0, Carbon::parse($deadline)->getTimestamp() - now()->getTimestamp());
+            }
+
+            $existingVote = $room->currentRoundVotes()->where('voter_id', auth()->id())->first();
+            if ($existingVote) {
+                $hasVoted = true;
+                $votedSubmissionId = $existingVote->submission_id;
             }
         }
 
@@ -167,6 +222,9 @@ class RoomController extends Controller
             'question' => $question,
             'time_left' => $timeLeft,
             'is_spectator' => $isSpectator,
+            'answers' => $answers,
+            'has_voted' => $hasVoted,
+            'voted_submission_id' => $votedSubmissionId,
         ];
     }
 }

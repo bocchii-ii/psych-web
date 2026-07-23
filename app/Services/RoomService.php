@@ -35,13 +35,15 @@ class RoomService
         private ScoreCalculator $scorer,
     ) {}
 
-    public function createRoom(User $host, int $totalRounds = 5): Room
+    public function createRoom(User $host, int $totalRounds = 5, int $maxPlayers = 8, array $excludedCategories = []): Room
     {
         $room = Room::create([
             'code' => $this->generateCode(),
             'host_id' => $host->id,
             'status' => 'waiting',
             'total_rounds' => $totalRounds,
+            'max_players' => $maxPlayers,
+            'excluded_categories' => $excludedCategories,
         ]);
 
         RoomPlayer::create([
@@ -56,12 +58,25 @@ class RoomService
     {
         $room = Room::where('code', strtoupper($code))->firstOrFail();
 
-        abort_if($room->status !== 'waiting', 422, 'Game already in progress.');
+        abort_if($room->status === 'finished', 422, 'Game has ended.');
 
-        RoomPlayer::firstOrCreate([
-            'room_id' => $room->id,
-            'user_id' => $user->id,
-        ]);
+        $alreadyJoined = $room->players()->where('user_id', $user->id)->exists();
+
+        if (!$alreadyJoined) {
+            // Joining while a round is already underway can only be done as a
+            // spectator — there's no way to fold a new active player into
+            // gameplay mid-round. The max-player cap only limits active slots,
+            // so it doesn't apply to spectators joining an ongoing game.
+            $isMidGame = $room->status !== 'waiting';
+
+            abort_if(!$isMidGame && $room->isFull(), 422, 'Room is full.');
+
+            RoomPlayer::create([
+                'room_id' => $room->id,
+                'user_id' => $user->id,
+                'is_spectator' => $isMidGame,
+            ]);
+        }
 
         $playerCount = $room->players()->count();
 
@@ -113,12 +128,22 @@ class RoomService
         $nextRound = $room->current_round + 1;
         $room->update(['current_round' => $nextRound, 'status' => 'question']);
 
+        $excludedCategories = $room->excluded_categories ?? [];
+
         $question = Question::where(function ($query) {
             $query->whereNull('asked_at')
                 ->orWhere('asked_at', '<', now()->startOfWeek());
-        })->inRandomOrder()->first();
+        })
+            ->when($excludedCategories, fn ($query) => $query->whereNotIn('category', $excludedCategories))
+            ->inRandomOrder()->first();
 
-        // Fall back to reusing a question if the whole bank was already asked this week
+        // Fall back to reusing a question if the whole bank (within the room's
+        // allowed categories) was already asked this week
+        $question ??= Question::when($excludedCategories, fn ($query) => $query->whereNotIn('category', $excludedCategories))
+            ->inRandomOrder()->first();
+
+        // Last resort: ignore the exclusions entirely rather than crash, in case
+        // a room excludes every category that has an available question.
         $question ??= Question::inRandomOrder()->first();
 
         $question->update(['asked_at' => now()]);
@@ -173,7 +198,7 @@ class RoomService
                 'user_id' => $user->id,
             ],
             [
-                'raw_answer' => $rawAnswer,
+                'raw_answer' => trim($rawAnswer),
                 'sanitized_answer' => $sanitized,
             ]
         );
@@ -204,7 +229,7 @@ class RoomService
 
         $answers = $submissions->map(fn ($s) => [
             'id' => $s->id,
-            'text' => $s->sanitized_answer,
+            'text' => $s->raw_answer,
             'is_correct' => false,
         ])->push([
             'id' => null,
@@ -215,11 +240,17 @@ class RoomService
         // Scale voting time with the number of choices so larger rooms (more
         // fake answers to read) still have enough time to decide.
         $votingSeconds = count($answers) * self::VOTING_SECONDS_PER_CHOICE;
+        $deadline = now()->addSeconds($votingSeconds);
+
+        // Cache the shuffled answers and deadline (not just broadcast them) so
+        // a player who reloads mid-voting can still be shown the choices —
+        // see RoomController::gameProps().
+        cache()->put("room:{$room->id}:round:{$room->current_round}:answers", $answers, 3600);
+        cache()->put("room:{$room->id}:round:{$room->current_round}:voting_deadline", $deadline->toIso8601String(), 3600);
 
         broadcast(new VotingStarted($room->code, $answers, $votingSeconds));
 
-        ExpireVotingPhase::dispatch($room->id, $room->current_round)
-            ->delay(now()->addSeconds($votingSeconds));
+        ExpireVotingPhase::dispatch($room->id, $room->current_round)->delay($deadline);
     }
 
     public function submitVote(Room $room, User $voter, ?int $submissionId): RoundVote
@@ -275,18 +306,23 @@ class RoomService
             $room->players()->where('user_id', $userId)->increment('score', $delta);
         }
 
-        // Track how many players each submission fooled, for the "Most/Least
-        // Psyched" end-game superlatives.
+        // Track how many players each submission fooled (for "Psyched Most
+        // Players") and how many times each voter fell for a fake answer
+        // (for "Most Gullible Player"), for the end-game superlatives.
         foreach ($submissions as $s) {
             if ($s->votes->isNotEmpty()) {
                 $room->players()->where('user_id', $s->user_id)->increment('times_fooled', $s->votes->count());
+
+                foreach ($s->votes as $vote) {
+                    $room->players()->where('user_id', $vote->voter_id)->increment('times_gullible');
+                }
             }
         }
 
         $answers = $submissions->map(function ($s) use ($points) {
             return [
                 'id' => $s->id,
-                'text' => $s->sanitized_answer,
+                'text' => $s->raw_answer,
                 'author' => $s->user->name,
                 'voters' => $s->votes->map(fn ($v) => $v->voter->name)->all(),
                 'points_earned' => $points[$s->user_id] ?? 0,
@@ -346,7 +382,7 @@ class RoomService
         abort_if($oldRoom->host_id !== $host->id, 403);
         abort_if($oldRoom->status !== 'finished', 422, 'Game is not finished yet.');
 
-        $newRoom = $this->createRoom($host, $oldRoom->total_rounds);
+        $newRoom = $this->createRoom($host, $oldRoom->total_rounds, $oldRoom->max_players, $oldRoom->excluded_categories ?? []);
 
         $otherPlayers = $oldRoom->players()->where('user_id', '!=', $host->id)->with('user')->get();
         foreach ($otherPlayers as $player) {
